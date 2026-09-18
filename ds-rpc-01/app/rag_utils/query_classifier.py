@@ -1,31 +1,6 @@
-from openai import OpenAI
-import os
+from app.llm.llm_provider import CLASSIFIER_MODELS
 
-
-from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
-
-
-# Load variables from .env
-load_dotenv()
-
-
-# Get Gemini API key from .env
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-
-if not GOOGLE_API_KEY:
-    raise ValueError("GOOGLE_API_KEY is missing from .env")
-
-
-# Create Gemini chat model
-model = ChatGoogleGenerativeAI(
-    model="gemini-3.7-flash",
-    temperature=0,
-    max_retries=2,
-    google_api_key=GOOGLE_API_KEY
-)
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def detect_query_type_llm(question: str) -> str:
     prompt = f"""
@@ -48,12 +23,36 @@ Here is the question:
 Answer:
     """
 
-    response = model.invoke(prompt)
-    # response = client.chat.completions.create(
-    #     model="gpt-4",
-    #     messages=[{"role": "user", "content": prompt}],
-    #     temperature=0
-    # )
-    result = response.content.strip().upper()
+    try:
 
-    return result
+        response = None
+        for model_instance in CLASSIFIER_MODELS:
+            try:
+                response = model_instance.invoke(prompt)
+                if response and response.content:
+                    break
+            except Exception:
+                continue
+
+        if not response or not response.content:
+            raise RuntimeError("All classifier models failed to respond.")
+
+        result = response.content.strip().upper()
+
+
+        if "SQL" in result and "RAG" not in result:
+            return "SQL"
+
+        if "RAG" in result and "SQL" not in result:
+            return "RAG"
+
+
+        return "RAG"
+
+    except Exception as e:
+
+        print(
+            f"⚠️ Query classification failed: {e}"
+        )
+
+        return "RAG"

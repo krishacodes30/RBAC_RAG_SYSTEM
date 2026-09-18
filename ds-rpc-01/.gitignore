@@ -12,3 +12,5 @@ wheels/
 *.lock
 resources/vectorstore
 .env
+# Local DuckDB database
+static/data/*.duckdb

@@ -13,9 +13,21 @@ from fastapi.responses import JSONResponse
 # from dotenv import load_dotenv
 from passlib.hash import bcrypt
 # from langchain_core.documents import Document
+from app.rag_utils.rag_module import load_file, embed_documents_to_vectorstore,ask_question
+from app.rag_utils.query_classifier import detect_query_type_llm
+from app.rag_utils.csv_query import ask_csv
+
 
 app = FastAPI()
 security = HTTPBasic()
+# ============================================================
+# UPLOAD DIRECTORY
+# ============================================================
+
+UPLOAD_DIR = "static/uploads"
+
+# Create the upload directory if it does not exist.
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Dummy user database
 # users_db: Dict[str, Dict[str, str]] = {
@@ -119,6 +131,53 @@ def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return {"username": username, "role": row[1]}
 
+def run_indexer():
+    conn = sqlite3.connect("roles_docs.db")
+    c = conn.cursor()
+
+    # Get documents that have not been embedded yet
+    c.execute("""
+        SELECT id, filepath, role
+        FROM documents
+        WHERE embedded = 0
+    """)
+
+    rows = c.fetchall()
+
+    all_docs = []
+    embedded_doc_ids = []
+
+    for doc_id, path, role in rows:
+
+        # Load file into LangChain Documents
+        docs = load_file(path, role)
+
+        if docs:
+            if isinstance(docs, list):
+                all_docs.extend(docs)
+            else:
+                all_docs.append(docs)
+
+            # Remember which document was successfully loaded
+            embedded_doc_ids.append(doc_id)
+
+    # Create embeddings and store them in Chroma
+    if all_docs:
+        embed_documents_to_vectorstore(all_docs)
+
+        # Mark documents as embedded ONLY after successful indexing
+        for doc_id in embedded_doc_ids:
+            c.execute(
+                "UPDATE documents SET embedded = 1 WHERE id = ?",
+                (doc_id,)
+            )
+
+        conn.commit()
+
+    conn.close()
+
+    print(f"✅ Indexed {len(all_docs)} document chunks.")
+
 
 # === MODELS ===
 class ChatRequest(BaseModel):
@@ -191,12 +250,74 @@ def test(user=Depends(authenticate)):
     return {"message": f"Hello {user['username']}! You can now chat.", "role": user["role"]}
 
 
-# Protected chat endpoint
 @app.post("/chat")
-def query(user=Depends(authenticate), message: str = "Hello"):
-    return "Implement this endpoint."
-
-
+async def chat(req: ChatRequest, user=Depends(authenticate)):
+    username = user["username"]
+    role = user["role"]
+    question = req.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+    print("\n========================================")
+    print(f"👤 User     : {username}")
+    print(f"🛡️ Role     : {role}")
+    print(f"❓ Question : {question}")
+    print("========================================")
+    try:
+        mode = detect_query_type_llm(question)
+    except Exception as e:
+        print(f"⚠️ Classifier error: {e}")
+        mode = "RAG"
+    print(f"🔀 Detected mode: {mode}")
+    result = None
+    fallback_used = False
+    if mode == "SQL":
+        try:
+            print("📊 Routing to SQL...")
+            result = await ask_csv(question, role, username, return_sql=True)
+            if not isinstance(result, dict):
+                print("⚠️ ask_csv returned a non-dictionary result.")
+                raise ValueError("SQL handler returned invalid response.")
+            answer = result.get("answer", "")
+            if result.get("error") or not str(answer).strip():
+                raise ValueError("SQL query failed or returned no answer.")
+        except Exception as e:
+            print(f"⚠️ SQL failed: {e}")
+            print("🔄 Falling back to RAG...")
+            try:
+                result = ask_question(question, role)
+            except Exception as rag_error:
+                print(f"❌ RAG fallback failed: {rag_error}")
+                raise HTTPException(status_code=500, detail="Both SQL and RAG processing failed.")
+            fallback_used = True
+            mode = "SQL → RAG"
+    else:
+        try:
+            print("📚 Routing to RAG...")
+            result = ask_question(question, role)
+        except Exception as e:
+            print(f"❌ RAG failed: {e}")
+            raise HTTPException(status_code=500, detail=f"RAG processing failed: {e}")
+        mode = "RAG"
+    if not isinstance(result, dict):
+        result = {"answer": str(result), "sources": []}
+    answer = result.get("answer", "No answer returned.")
+    if answer is None:
+        answer = "No answer returned."
+    answer = str(answer)
+    response = {
+        "user": username,
+        "role": role,
+        "mode": mode,
+        "fallback": fallback_used,
+        "answer": answer,
+        "sources": result.get("sources", [])
+    }
+    if result.get("sql"):
+        response["sql"] = result["sql"]
+    print(f"✅ Final response mode: {mode}")
+    print(f"📚 Sources: {response['sources']}")
+    print("========================================\n")
+    return response
 
 @app.post("/upload-docs")
 async def upload_docs(file: UploadFile = File(...), role: str = Form(...)):
