@@ -147,19 +147,6 @@ An **automated evaluation pipeline** to assess output quality. It generates ques
 * Separately validate RBAC using retrieved document role/source metadata
 
 
-## **8. Automation Testing**
-### **Backend API Testing – Pytest**
-* FastAPI endpoints (`/chat`, `/upload`, `/login`, etc.) tested using `TestClient`
-* Verified classifier routing, SQL execution, RAG fallback logic
-
-### **Frontend Testing – Playwright**
-* End-to-end tests for **Streamlit UI**:
-  * Login flow
-  * Role-based tab rendering
-  * Document upload
-  * Query submission and output display
-
-* **Video recording** enabled for demo and review
 
 ## **Tech Stack**
  * AI/LLM: OpenAI GPT-4o, LangChain
@@ -168,7 +155,7 @@ An **automated evaluation pipeline** to assess output quality. It generates ques
  * Vector DB: Chroma DB
  * File Support: Markdown, CSV
  * Access Control: RBAC
- * Testing: Pytest, Playwright
+
 
 ## **Future Enhancements**
 * Support **admin analytics dashboard** (e.g., query types, usage).
