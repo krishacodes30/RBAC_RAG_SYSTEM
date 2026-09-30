@@ -45,9 +45,10 @@ def get_allowed_tables_for_role(role: str) -> list[str]:
         return [row[0] for row in duck_conn.execute(query, [role]).fetchall()]
 
 def extract_tables_from_sql(sql: str) -> list[str]:
-    matches = re.findall(r"(?:FROM|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_]*)", sql, flags=re.IGNORECASE)
-    return list(dict.fromkeys(matches))
+    matches = re.findall(r"(?:FROM|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_]*)", sql, flags=re.IGNORECASE)#finds table
+    return list(dict.fromkeys(matches))#remove duplicates
 
+#SQL Security Guardrail
 def is_safe_query(sql: str) -> bool:
     cleaned_sql = sql.strip().lower().rstrip(";")
     if not cleaned_sql.startswith("select"):
